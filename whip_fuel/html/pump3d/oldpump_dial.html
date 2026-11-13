@@ -1,0 +1,347 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="darkreader-lock">
+<title>Old pump dial</title>
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; overflow: hidden; }
+  canvas { display: block; }
+</style>
+</head>
+<body>
+<canvas id="c" width="768" height="544"></canvas>
+<script>
+// The counter screens of the classic pumps as a DUI, one page for all three:
+//   old2     prop_gas_pump_old2, Xero: 768x544 = Rockstar's counter window, set back in its hood behind the glass
+//            (0.637 x 0.452 m); Rockstar's cream window with the Xero blue bands
+//   old3     prop_gas_pump_old3, Ltd: the same panel with the Ltd navy bands
+//   vintage  prop_vintage_pump, Globe Oil: 480x552 = its sale plate (0.220 x 0.253 m); Rockstar's enamel plate, black
+//            drums: TOTAL SALE (dollars), then GALLONS and LITERS (same size)
+// Mechanical drums that roll like an odometer; the page draws only while a drum moves, so an idle pump costs nothing.
+//
+// Two modes:
+//   ?pump=old2|old3|vintage   one dial (the canvas is that pump's size)
+//   ?atlas=bands|vintage      four dials in a 2x2 grid, slot 0 top left, 1 top right, 2 bottom left, 3 bottom right
+//                             (bands: 1536x1088, old2 / old3 per slot; vintage: 960x1104). One DUI drives the four
+//                             whip_oldpump_dial_<n> / whip_vintage_dial_<n> overlay props, each showing its own slot.
+//
+// Messages (SendDuiMessage JSON), the same for every pump; "slot" (0-3, default 0) picks the dial in atlas mode:
+//   {"slot":1,"pump":"old3"}                    the slot's pump (bands atlas: old2 / old3); repaints its background
+//   {"set":{"price":63,"liters":27.6}}          show a pump's last sale at once (no roll), e.g. when its dial spawns
+//   {"reset":true}                              a new sale: every drum rolls down to 0 by itself (about 1.4 s)
+//   {"sale":{"price":12,"liters":5.2},"seconds":0.5}
+//                                               roll up to these totals over `seconds` (send each refuel tick with
+//                                               the tick length, the drums keep moving smoothly between ticks)
+//   They combine: {"slot":2,"pump":"old2","set":{"price":0,"liters":0}}
+// Gallons = liters / 3.785411784 (75 L = 19.8 gal). Price rounds to whole dollars. Maxima: $99999, 99.9 gal, 99.9 L.
+// Testing in a browser: oldpump_dial.html?pump=old3&price=63&liters=27.6  or  ?pump=vintage&demo=1  or  ?atlas=bands&demo=1
+
+const q = new URLSearchParams(location.search);
+const ATLAS = ['bands', 'vintage'].includes(q.get('atlas')) ? q.get('atlas') : null;
+const FIRST = ATLAS === 'vintage' ? 'vintage' : ['old2', 'old3', 'vintage'].includes(q.get('pump')) ? q.get('pump') : 'old2';
+const LITERS_PER_GALLON = 3.785411784;
+const FONT = "'Bahnschrift SemiBold Condensed', 'Bahnschrift Condensed', Bahnschrift, 'Arial Narrow', Arial, sans-serif";
+const FONT_WIDE = "'Bahnschrift SemiBold', Bahnschrift, Arial, sans-serif";
+
+// counter: drums (least significant drawn last), decimals, drum size, gap, position (set by the layout)
+function counter(drums, decimals, dw, dh, gap) { return { drums, decimals, dw, dh, gap, x: 0, y: 0 }; }
+
+const LAYOUTS = {
+  bands: {                                          // old2 / old3: Rockstar's counter window, 0.637 x 0.452 m
+    W: 768, H: 544, pad: 12, dot: 16, drum: 'white',
+    label: { total: 40, units: 38, below: 38, above: 10, dollar: 98 },
+    counters: { price: counter(5, 0, 80, 124, 6), gallons: counter(3, 1, 66, 100, 5), liters: counter(3, 1, 66, 100, 5) },
+    place(c, W) {                                   // every label lands on the cream stripe, in dark ink
+      const p = c.price, dollar = 60, group = dollar + width(this, p);
+      p.x = Math.round((W - group) / 2 + dollar); p.y = 44;
+      c.gallons.x = Math.round(W * 0.27 - width(this, c.gallons) / 2); c.gallons.y = 350;
+      c.liters.x = Math.round(W * 0.73 - width(this, c.liters) / 2); c.liters.y = 350;
+    },
+  },
+  vintage: {
+    W: 480, H: 552, pad: 5, dot: 12, drum: 'black',
+    counters: { price: counter(5, 0, 42, 66, 6), gallons: counter(3, 1, 54, 80, 6), liters: counter(3, 1, 54, 80, 6) },
+    place(c, W) {
+      c.price.x = Math.round((W - width(this, c.price)) / 2); c.price.y = 76;
+      c.gallons.x = Math.round((W - width(this, c.gallons)) / 2); c.gallons.y = 252;
+      c.liters.x = Math.round((W - width(this, c.liters)) / 2); c.liters.y = 410;
+    },
+  },
+};
+const THEMES = {
+  old2:    { layout: 'bands', paper: '#d6d7ce', band: '#21619b' },   // Rockstar's Xero window
+  old3:    { layout: 'bands', paper: '#d6d7ce', band: '#262b45' },   // the Ltd navy of old3's own panel
+  vintage: { layout: 'vintage', paper: '#d8d8d2', ink: '#2c2c2b' },  // Rockstar's Globe Oil enamel plate
+};
+function width(L, c) { return c.drums * c.dw + (c.drums - 1) * c.gap + (c.decimals ? L.dot : 0) + 2 * L.pad; }
+for (const L of Object.values(LAYOUTS)) L.place(L.counters, L.W);
+
+const LAYOUT = LAYOUTS[THEMES[FIRST].layout];
+const cv = document.getElementById('c'), ctx = cv.getContext('2d');
+cv.width = LAYOUT.W * (ATLAS ? 2 : 1); cv.height = LAYOUT.H * (ATLAS ? 2 : 1);
+
+// --- state: each dial's counter values (in their least unit) are animated; drums follow them like an odometer -------
+const zero = () => ({ price: 0, gallons: 0, liters: 0 });
+function makeCell(slot, pump) {
+  return { slot, pump, theme: THEMES[pump], L: LAYOUT, x: ATLAS ? (slot % 2) * LAYOUT.W : 0,
+           y: ATLAS ? Math.floor(slot / 2) * LAYOUT.H : 0, background: null, dirty: true,
+           value: zero(), anim: { from: zero(), to: zero(), t0: 0, dur: 0, reset: null } };   // reset = { t0, dur, start }
+}
+const cells = ATLAS ? [0, 1, 2, 3].map((k) => makeCell(k, FIRST)) : [makeCell(0, FIRST)];
+
+function units(price, liters) {
+  const l = Math.max(0, Math.min(99.9, Number(liters) || 0));
+  return { price: Math.round(Math.max(0, Math.min(99999, Number(price) || 0))),
+           liters: Math.round(l * 10), gallons: Math.round(Math.min(99.9, l / LITERS_PER_GALLON) * 10) };
+}
+
+// odometer: the least drum turns continuously; each higher drum turns with the last tenth of the drum below it
+function drumPositions(v, n) {
+  const pos = new Array(n);
+  pos[0] = ((v % 10) + 10) % 10;
+  for (let i = 1; i < n; i++) pos[i] = (Math.floor(v / 10 ** i) % 10) + Math.max(0, pos[i - 1] - 9);
+  return pos;
+}
+
+// --- backgrounds ---------------------------------------------------------------------------------------------------------
+function rng(seed) { let s = seed; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
+
+function weather(g, W, H, rnd, specks, smudges, rimAlpha) {
+  for (let i = 0; i < specks; i++) {
+    const x = rnd() * W, y = rnd() * H, r = 0.4 + rnd() * 1.3, a = 0.04 + rnd() * 0.10;
+    g.fillStyle = rnd() < 0.7 ? `rgba(60,55,45,${a})` : `rgba(255,255,250,${a})`;
+    g.fillRect(x, y, r, r);
+  }
+  for (let i = 0; i < smudges; i++) {
+    const x = rnd() * W, y = rnd() * H, r = 0.03 * W + rnd() * 0.09 * W;
+    const sm = g.createRadialGradient(x, y, 0, x, y, r);
+    sm.addColorStop(0, `rgba(70,62,48,${0.05 + rnd() * 0.06})`); sm.addColorStop(1, 'rgba(70,62,48,0)');
+    g.fillStyle = sm; g.fillRect(x - r, y - r, 2 * r, 2 * r);
+  }
+  const rim = g.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.max(W, H) * 0.62);
+  rim.addColorStop(0, 'rgba(40,36,30,0)'); rim.addColorStop(1, `rgba(40,36,30,${rimAlpha})`);
+  g.fillStyle = rim; g.fillRect(0, 0, W, H);
+}
+
+
+function bandsBackground(g, cell) {
+  const { L, theme } = cell, { W, H } = L, counters = L.counters;
+  g.fillStyle = theme.paper; g.fillRect(0, 0, W, H);
+  g.fillStyle = theme.band;                         // Rockstar's bands: the white stripe falls to the right
+  g.beginPath(); g.moveTo(0, 0); g.lineTo(W, 0); g.lineTo(W, 0.29 * H); g.lineTo(0, 0.043 * H); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(0, 0.62 * H); g.lineTo(W, 0.87 * H); g.lineTo(W, H); g.lineTo(0, H); g.closePath(); g.fill();
+  weather(g, W, H, rng(20261030), 2600, 22, 0.28);
+  // printed labels in dark ink on the cream stripe, as on Rockstar's window: TOTAL SALE under its counter (like the
+  // original's), GALLONS / LITERS above theirs
+  const p = counters.price, lb = L.label;
+  const labels = [['price', 'TOTAL SALE', lb.total, p.y + p.dh + 2 * L.pad + lb.below],
+                  ['gallons', 'GALLONS', lb.units, counters.gallons.y - lb.above],
+                  ['liters', 'LITERS', lb.units, counters.liters.y - lb.above]];
+  for (const [k, text, size, ly] of labels) {
+    const c = counters[k], cx = c.x + width(L, c) / 2;
+    g.font = `${size}px ${FONT}`; g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+    if ('letterSpacing' in g) g.letterSpacing = '2px';
+    g.fillStyle = '#171716';
+    g.fillText(text, cx, ly);
+  }
+  g.font = `${lb.dollar}px ${FONT}`; g.textAlign = 'right'; g.fillStyle = '#171716';
+  g.fillText('$', p.x - 10, p.y + L.pad + p.dh * 0.84);
+}
+
+function vintageBackground(g, cell) {
+  // the enamel plate: rounded, dark rim, faded grey-white; TOTAL SALE heads it, each counter has its label above
+  const { L, theme } = cell, { W, H } = L, counters = L.counters;
+  g.fillStyle = '#16161a'; g.fillRect(0, 0, W, H);
+  roundRect(g, 6, 6, W - 12, H - 12, 26); g.fillStyle = theme.paper; g.fill();
+  g.save(); roundRect(g, 6, 6, W - 12, H - 12, 26); g.clip();
+  weather(g, W, H, rng(19560301), 1800, 16, 0.42);
+  g.restore();
+  const ink = theme.ink;
+  const text = (s, x, y, font, align = 'center', spacing = '0px') => {
+    g.font = font; g.textAlign = align; g.textBaseline = 'alphabetic'; g.fillStyle = ink;
+    if ('letterSpacing' in g) g.letterSpacing = spacing;
+    g.fillText(s, x, y);
+  };
+  const rule = (x0, x1, y, w = 2) => { g.fillStyle = ink; g.fillRect(x0, y, x1 - x0, w); };
+  text('TOTAL SALE', W / 2, 56, `46px ${FONT_WIDE}`, 'center', '1px');
+  const p = counters.price;
+  text('DOLLARS', W / 2, p.y + p.dh + 2 * L.pad + 22, `17px ${FONT}`, 'center', '1px');
+  rule(p.x - 20, p.x + width(L, p) + 20, p.y + p.dh + 2 * L.pad + 30);
+  const gl = counters.gallons;
+  text('GALLONS', W / 2, gl.y - 12, `46px ${FONT_WIDE}`, 'center', '1px');
+  const lt = counters.liters;
+  text('LITERS', W / 2, lt.y - 12, `46px ${FONT_WIDE}`, 'center', '1px');
+}
+
+function makeBackground(cell) {
+  const b = document.createElement('canvas'); b.width = cell.L.W; b.height = cell.L.H;
+  (cell.theme.layout === 'vintage' ? vintageBackground : bandsBackground)(b.getContext('2d'), cell);
+  return b;
+}
+
+// --- counters ----------------------------------------------------------------------------------------------------------
+function roundRect(g, x, y, w, h, r) {
+  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+  g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
+}
+
+const DRUMS = {
+  white: { face: '#efeee6', digit: '#141414', shade: 0.55 },  // old2 / old3: white drums, black figures
+  black: { face: '#131313', digit: '#e8e5da', shade: 0.65 },  // vintage: black drums, white figures
+};
+function drawDrum(L, x, y, w, h, pos) {
+  const st = DRUMS[L.drum];
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x, y, w, h); ctx.clip();
+  ctx.fillStyle = st.face; ctx.fillRect(x, y, w, h);
+  const pitch = h * 0.95, step = (2 * Math.PI) / 10, r = pitch / step;   // digits around a drum of radius r
+  ctx.font = `${Math.round(h * 0.80)}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = st.digit;
+  const k0 = Math.floor(pos);
+  for (let k = k0 - 1; k <= k0 + 2; k++) {
+    const ang = (k - pos) * step;
+    if (Math.abs(ang) > 1.2) continue;
+    const cy = y + h / 2 + r * Math.sin(ang), sy = Math.cos(ang);            // next digit comes up from below
+    ctx.save(); ctx.translate(x + w / 2, cy); ctx.scale(1, sy);
+    ctx.fillText(String(((k % 10) + 10) % 10), 0, h * 0.04);
+    ctx.restore();
+  }
+  const sh = ctx.createLinearGradient(0, y, 0, y + h);                       // the drum's curve
+  sh.addColorStop(0, `rgba(0,0,0,${st.shade})`); sh.addColorStop(0.22, 'rgba(0,0,0,0.06)'); sh.addColorStop(0.5, 'rgba(0,0,0,0)');
+  sh.addColorStop(0.78, 'rgba(0,0,0,0.06)'); sh.addColorStop(1, `rgba(0,0,0,${st.shade})`);
+  ctx.fillStyle = sh; ctx.fillRect(x, y, w, h);
+  ctx.restore();
+}
+
+function drawCounter(cell, c, positions) {
+  const L = cell.L, pad = L.pad, bw = width(L, c), bh = c.dh + 2 * pad;
+  if (L.drum === 'white') {                                                // one dark bezel around the drums
+    ctx.save();
+    ctx.shadowColor = 'rgba(0,0,0,0.45)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4;
+    roundRect(ctx, c.x, c.y, bw, bh, 14); ctx.fillStyle = '#2a2c2d'; ctx.fill();
+    ctx.restore();
+    roundRect(ctx, c.x + 3, c.y + 3, bw - 6, bh - 6, 11); ctx.strokeStyle = 'rgba(255,255,255,0.10)'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  let x = c.x + pad;
+  for (let i = c.drums - 1; i >= 0; i--) {                                 // most significant drum on the left
+    if (L.drum === 'black') {                                              // vintage: each drum its own window
+      ctx.fillStyle = '#0b0b0c'; ctx.fillRect(x - pad, c.y, c.dw + 2 * pad, bh);
+    }
+    drawDrum(L, x, c.y + pad, c.dw, c.dh, positions[i]);
+    x += c.dw + c.gap;
+    if (c.decimals && i === c.decimals) {                                 // the printed decimal point
+      ctx.fillStyle = L.drum === 'white' ? '#e9e7de' : cell.theme.ink;
+      ctx.beginPath(); ctx.arc(x - c.gap / 2 + L.dot / 2 - 1, c.y + pad + c.dh - 4, L.drum === 'white' ? 4.5 : 3.5, 0, 2 * Math.PI); ctx.fill();
+      x += L.dot;
+    }
+  }
+  const gl = ctx.createLinearGradient(c.x, c.y, c.x + bw * 0.6, c.y + bh);   // glass over the drums
+  gl.addColorStop(0, 'rgba(255,255,255,0.16)'); gl.addColorStop(0.45, 'rgba(255,255,255,0.03)'); gl.addColorStop(1, 'rgba(255,255,255,0)');
+  roundRect(ctx, c.x + pad - 3, c.y + pad - 3, bw - 2 * pad + 6, c.dh + 6, 4); ctx.fillStyle = gl; ctx.fill();
+}
+
+// one dial: returns true while a drum still moves
+function drawCell(cell, now) {
+  const counters = cell.L.counters, anim = cell.anim;
+  let moving = false;
+  ctx.save();
+  ctx.translate(cell.x, cell.y);
+  ctx.beginPath(); ctx.rect(0, 0, cell.L.W, cell.L.H); ctx.clip();
+  ctx.drawImage(cell.background || (cell.background = makeBackground(cell)), 0, 0);
+  for (const k of Object.keys(counters)) {
+    const c = counters[k];
+    let pos;
+    if (anim.reset) {
+      const t = Math.min(1, (now - anim.reset.t0) / anim.reset.dur), e = 1 - (1 - t) ** 3;
+      pos = anim.reset.start[k].map((p) => p * (1 - e));                  // each drum rolls down to 0 by itself
+      if (t < 1) moving = true;
+    } else {
+      const t = anim.dur > 0 ? Math.min(1, (now - anim.t0) / anim.dur) : 1;
+      cell.value[k] = anim.from[k] + (anim.to[k] - anim.from[k]) * t;
+      if (t < 1) moving = true;
+      pos = drumPositions(cell.value[k], c.drums);
+    }
+    drawCounter(cell, c, pos);
+  }
+  ctx.restore();
+  if (anim.reset && !moving) {                                             // reset finished: everything at 0
+    anim.reset = null; cell.value = zero();
+    anim.from = zero(); anim.to = zero(); anim.dur = 0;
+  }
+  cell.dirty = false;
+  return moving;
+}
+
+// only the dials that changed or still move are drawn
+const busy = new Set();
+function draw(now) {
+  for (const cell of cells) if (cell.dirty || busy.has(cell)) { if (drawCell(cell, now)) busy.add(cell); else busy.delete(cell); }
+  return busy.size > 0;
+}
+
+let raf = 0;
+function kick() {
+  if (raf) return;
+  const loop = (now) => { raf = 0; if (draw(now)) raf = requestAnimationFrame(loop); };
+  raf = requestAnimationFrame(loop);
+}
+
+// --- messages ----------------------------------------------------------------------------------------------------------
+function update(m) {
+  if (typeof m === 'string') { try { m = JSON.parse(m); } catch { return; } }
+  if (!m || typeof m !== 'object') return;
+  const cell = cells[Math.max(0, Math.min(cells.length - 1, Math.floor(Number(m.slot) || 0)))];
+  const anim = cell.anim, now = performance.now();
+  if (m.pump && THEMES[m.pump] && THEMES[m.pump].layout === THEMES[cell.pump].layout && m.pump !== cell.pump) {
+    cell.pump = m.pump; cell.theme = THEMES[m.pump]; cell.background = null;
+  }
+  if (m.set) {
+    anim.reset = null; cell.value = units(m.set.price, m.set.liters);
+    anim.from = { ...cell.value }; anim.to = { ...cell.value }; anim.dur = 0;
+  }
+  if (m.reset) {
+    const start = {};
+    for (const [k, c] of Object.entries(cell.L.counters)) start[k] = drumPositions(cell.value[k], c.drums);
+    anim.reset = { t0: now, dur: 1400, start };
+  }
+  if (m.sale) {
+    if (anim.reset) {                                                      // a tick during the reset: zero first
+      anim.reset = null; cell.value = zero();
+    }
+    anim.from = { ...cell.value }; anim.to = units(m.sale.price, m.sale.liters);
+    anim.t0 = now; anim.dur = Math.max(0, Number(m.seconds) || 0) * 1000;
+  }
+  cell.dirty = true;
+  kick();
+}
+window.addEventListener('message', (e) => update(e.data));
+
+if (q.get('demo')) {
+  // a sale every ~16 s per dial: hold the last one, reset, fill to a random total in 0.5 s ticks, hold
+  const PRICE_PER_LITER = 3.2;
+  for (const cell of cells) {
+    const slot = cell.slot;
+    if (ATLAS === 'bands') update({ slot, pump: slot % 2 ? 'old3' : 'old2' });
+    update({ slot, set: { price: 88 - 17 * slot, liters: 27.6 - 5.3 * slot } });
+    const cycle = () => {
+      setTimeout(() => update({ slot, reset: true }), 2500);
+      const target = 20 + Math.random() * 55, steps = 18;
+      for (let i = 1; i <= steps; i++) {
+        setTimeout(() => {
+          const l = (target * i) / steps;
+          update({ slot, sale: { price: l * PRICE_PER_LITER, liters: l }, seconds: 0.5 });
+        }, 4200 + i * 500);
+      }
+      setTimeout(cycle, 4200 + steps * 500 + 3000);
+    };
+    setTimeout(cycle, slot * 3700);
+  }
+} else if (!ATLAS) {
+  update({ set: { price: q.get('price') || 0, liters: q.get('liters') || 0 } });
+} else {
+  kick();
+}
+</script>
+</body>
+</html>

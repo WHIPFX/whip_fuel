@@ -1,0 +1,246 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="darkreader-lock">
+<title>Pump screen</title>
+<style>
+  html, body { margin: 0; width: 100%; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<canvas id="lcd" width="640" height="512"></canvas>
+<script>
+// A modern pump's screen (each side's LCD on 1a / 1b / 1c / 1d), shown in game through a DUI: an old-school backlit
+// 14-segment LCD in the radio's style. ONE page draws every busy side near you, each in its own CELL of an atlas
+// (?atlas=1280x1024&cells=x,y,w,h;x,y,w,h;...: client/pumps.lua sends the layout); without one it is a single screen.
+// Each cell is the same 640 x 512 screen, scaled to its cell. The game drives it with SendDuiMessage(dui, json), each
+// message for one cell (`cell`: 0, the first, when left out):
+//   {"cell":2,"state":"off"}                  nothing (a cell no side has now: it never animates)
+//   {"state":"idle"}                          WELCOME
+//   {"state":"nozzle_out"}                    NOZZLE / OUT          (nozzle in hand, not in a car yet)
+//   {"state":"pay","price":123}               REFUEL? / $123        (pre-pay prompt, the price from whip)
+//   {"state":"fueling","progress":0.4}        REFUELING... (dots animate; progress 0..1 optional: bar)
+//   {"state":"return_nozzle"}                 PLEASE / RETURN / NOZZLE
+//   {"state":"thanks"}                        THANK / YOU!
+//   {"state":"custom","line1":"..","line2":".."}
+//   {"pump":3}                                the pump number in the corner (any message may carry it)
+//   {"brand":"GLOBE OIL"}                     the pump's brand, top left (LTD, RON, GLOBE OIL, XERO; any message may
+//                                             carry it): a long one shrinks to fit (3D Clanker's remaster)
+// Testing in a browser: pump_lcd.html?state=pay&price=123&pump=3&brand=XERO
+
+const SEG = {};
+const g = (c, s) => { SEG[c] = s.split(' ').filter(Boolean); };
+g('0', 'a b c d e f j k'); g('1', 'b c j'); g('2', 'a b g1 g2 e d'); g('3', 'a b c d g2'); g('4', 'f g1 g2 b c');
+g('5', 'a f g1 g2 c d'); g('6', 'a f e d c g1 g2'); g('7', 'a b c'); g('8', 'a b c d e f g1 g2'); g('9', 'a b c d f g1 g2');
+g('A', 'a b c e f g1 g2'); g('B', 'a b c d i l g2'); g('C', 'a d e f'); g('D', 'a b c d i l'); g('E', 'a d e f g1');
+g('F', 'a e f g1'); g('G', 'a c d e f g2'); g('H', 'b c e f g1 g2'); g('I', 'a d i l'); g('J', 'b c d e');
+g('K', 'e f g1 j m'); g('L', 'd e f'); g('M', 'b c e f h j'); g('N', 'b c e f h m'); g('O', 'a b c d e f');
+g('P', 'a b e f g1 g2'); g('Q', 'a b c d e f m'); g('R', 'a b e f g1 g2 m'); g('S', 'a f g1 g2 c d'); g('T', 'a i l');
+g('U', 'b c d e f'); g('V', 'e f k j'); g('W', 'b c e f k m'); g('X', 'h j k m'); g('Y', 'h j l'); g('Z', 'a d j k');
+g('-', 'g1 g2'); g('_', 'd'); g(' ', ''); g('/', 'j k'); g('+', 'g1 g2 i l'); g('*', 'g1 g2 h i j k l m'); g("'", 'i');
+g('$', 'a f g1 g2 c d i l'); g('?', 'a b g2 l'); g('!', 'i');
+const ALL = 'a b c d e f g1 g2 h i j k l m'.split(' ');
+
+function segPolys(w, h, t) {
+  const q = t * 0.5, gp = t * 0.35, mx = w / 2, my = h / 2;
+  const hz = (x0, x1, y) => [[x0 + gp, y], [x0 + q + gp, y - q], [x1 - q - gp, y - q], [x1 - gp, y], [x1 - q - gp, y + q], [x0 + q + gp, y + q]];
+  const vt = (x, y0, y1) => [[x, y0 + gp], [x + q, y0 + q + gp], [x + q, y1 - q - gp], [x, y1 - gp], [x - q, y1 - q - gp], [x - q, y0 + q + gp]];
+  const dg = (x0, y0, x1, y1) => { const k = t * 0.42; return [[x0 + k, y0 + k * 1.6], [x0 + k * 2.2, y0 + k], [x1 - k, y1 - k * 1.6], [x1 - k * 2.2, y1 - k]]; };
+  const dg2 = (x0, y0, x1, y1) => { const k = t * 0.42; return [[x0 - k, y0 + k * 1.6], [x0 - k * 2.2, y0 + k], [x1 + k, y1 - k * 1.6], [x1 + k * 2.2, y1 - k]]; };
+  return {
+    a: hz(q, w - q, q), d: hz(q, w - q, h - q), g1: hz(q, mx, my), g2: hz(mx, w - q, my),
+    f: vt(q, q, my), b: vt(w - q, q, my), e: vt(q, my, h - q), c: vt(w - q, my, h - q),
+    i: vt(mx, q, my), l: vt(mx, my, h - q),
+    h: dg(q, q, mx, my), m: dg(mx, my, w - q, h - q), j: dg2(w - q, q, mx, my), k: dg2(mx, my, q, h - q),
+  };
+}
+
+function fillPoly(ctx, pts, ox, oy, slant, h) {
+  ctx.beginPath();
+  pts.forEach(([x, y], n) => { const X = ox + x + (h - y) * slant, Y = oy + y; n ? ctx.lineTo(X, Y) : ctx.moveTo(X, Y); });
+  ctx.closePath(); ctx.fill();
+}
+
+// a row of `slots` 14-segment cells (unlit segments drawn as faint ghosts); '.' lights the point after a cell
+function segRow(ctx, text, slots, x, y, cw, ch, pal) {
+  const gap = cw * 0.24, t = cw * 0.17, slant = 0.1;
+  const polys = segPolys(cw, ch, t);
+  const chars = [...text.toUpperCase()].slice(0, slots);
+  const pad = Math.max(0, Math.floor((slots - chars.length) / 2));
+  const cells = Array(slots).fill(' ');
+  chars.forEach((c, n) => { cells[pad + n] = c; });
+  let cx = x;
+  for (let n = 0; n < slots; n++) {
+    ctx.fillStyle = pal.ghost;
+    for (const s of ALL) fillPoly(ctx, polys[s], cx, y, slant, ch);
+    ctx.fillStyle = pal.ink;
+    for (const s of (SEG[cells[n]] || SEG['-'])) fillPoly(ctx, polys[s], cx, y, slant, ch);
+    const r = t * 0.55, lit = '?!'.includes(cells[n]);
+    ctx.fillStyle = lit ? pal.ink : pal.ghost;
+    ctx.beginPath(); ctx.arc(cx + cw + gap * 0.5, y + ch - r, r, 0, Math.PI * 2); ctx.fill();
+    cx += cw + gap;
+  }
+  return x + (pad + chars.length) * (cw + gap);                 // where the text ends
+}
+
+const rowWidth = (slots, cw) => slots * cw + (slots - 1) * cw * 0.24;
+
+function label(ctx, txt, x, y, on, pal, size, align = 'left', boxed = false) {
+  ctx.font = `700 ${size}px "Arial Narrow", Arial, sans-serif`;
+  ctx.textBaseline = 'middle'; ctx.textAlign = align;
+  const w = ctx.measureText(txt).width, x0 = align === 'right' ? x - w : align === 'center' ? x - w / 2 : x;
+  if (boxed) {
+    ctx.fillStyle = on ? pal.ink : pal.ghost; ctx.fillRect(x0 - 7, y - size * 0.64, w + 14, size * 1.28);
+    if (on) { ctx.fillStyle = pal.bg0; ctx.fillText(txt, x, y + 1); }
+  } else { ctx.fillStyle = on ? pal.ink : pal.ghost; ctx.fillText(txt, x, y + 1); }
+}
+
+const PAL = { bg0: '#c3de5e', bg1: '#93ad3c', ink: 'rgba(24,34,10,0.93)', ghost: 'rgba(24,34,10,0.08)' };
+// The error state flashes between these two: the backlight red, then dark
+const PAL_ERR = { bg0: '#ff5a46', bg1: '#c4251a', ink: 'rgba(48,0,0,0.93)', ghost: 'rgba(48,0,0,0.10)' };
+const PAL_ERR_DIM = { bg0: '#5a0f0b', bg1: '#2c0605', ink: 'rgba(255,90,70,0.85)', ghost: 'rgba(255,90,70,0.07)' };
+const blank = () => ({ state: 'idle', price: 0, progress: null, pump: null, brand: 'LTD', line1: '', line2: '', seconds: null });
+
+// The atlas: each cell's place on the page ([x, y, w, h]), and what it shows. No ?atlas: one screen, the whole page.
+const q = new URLSearchParams(location.search);
+const canvas = document.getElementById('lcd');
+const CELLS = [];
+const atlas = /^(\d+)x(\d+)$/.exec(q.get('atlas') || '');
+if (atlas) {
+  canvas.width = Number(atlas[1]); canvas.height = Number(atlas[2]);
+  for (const c of (q.get('cells') || '').split(';')) {
+    const n = c.split(',').map(Number);
+    if (n.length === 4 && n.every((x) => Number.isFinite(x))) CELLS.push(n);
+  }
+}
+if (!CELLS.length) CELLS.push([0, 0, canvas.width, canvas.height]);
+const views = CELLS.map(() => blank());
+
+function lines(v, tick) {
+  const dots = (tick % 4);
+  switch (v.state) {
+    case 'nozzle_out': return { top: 'NOZZLE', bottom: 'OUT', flags: { NOZZLE: true } };
+    case 'pay': return { top: 'REFUEL?', bottom: '$' + Math.max(0, Math.round(v.price || 0)), flags: { 'PRE-PAY': true, NOZZLE: true } };
+    case 'fueling': return { top: 'REFUELING', topDots: dots, bottom: null, flags: { FUEL: true, NOZZLE: true } };
+    case 'return_nozzle': return { small: 'PLEASE', top: 'RETURN', bottom: 'NOZZLE', flags: { NOZZLE: true } };
+    case 'thanks': return { top: 'THANK', bottom: 'YOU!', flags: {} };
+    case 'custom': return { top: v.line1 || '', bottom: v.line2 || null, flags: {} };
+    // Out of order after a spill (whip_core), flashing red; how long is left in the small line when it is sent
+    case 'error': return { small: v.seconds != null ? 'ERROR  ' + Math.max(0, Math.round(v.seconds)) + 's' : 'ERROR', top: 'OUT OF', bottom: 'ORDER', flags: {} };
+    default: return { top: 'WELCOME', bottom: null, flags: {} };
+  }
+}
+
+// One cell: the 640 x 512 screen scaled into its place, nothing drawn outside it. An 'off' cell is black.
+function draw(i, tick) {
+  const ctx = canvas.getContext('2d'), [cx, cy, cw, chh] = CELLS[i], view = views[i];
+  ctx.save();
+  ctx.beginPath(); ctx.rect(cx, cy, cw, chh); ctx.clip();
+  ctx.translate(cx, cy); ctx.scale(cw / 640, chh / 512);
+  if (view.state === 'off') { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 640, 512); }
+  else drawScreen(ctx, view, tick);
+  ctx.restore();
+}
+
+function drawScreen(ctx, view, tick) {
+  const W = 640, H = 512;
+  const pal = view.state === 'error' ? (tick % 2 ? PAL_ERR_DIM : PAL_ERR) : PAL;
+  const gr = ctx.createRadialGradient(W * 0.5, H * 0.45, H * 0.1, W * 0.5, H * 0.5, W * 0.66);
+  gr.addColorStop(0, pal.bg0); gr.addColorStop(1, pal.bg1);
+  ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
+  const L = lines(view, tick);
+  // status row: brand, the flags, the pump number. A long brand shrinks to fit, then pushes the flags right a little
+  // (their gap shrinking only as needed); LTD draws exactly as before
+  const sy = 40;
+  let brandSize = 30, brandW;
+  for (;; brandSize -= 2) {
+    ctx.font = `700 ${brandSize}px "Arial Narrow", Arial, sans-serif`;
+    brandW = ctx.measureText(view.brand).width;
+    if (30 + brandW + 39 <= 150 || brandSize <= 18) break;
+  }
+  label(ctx, view.brand, 30, sy, true, pal, brandSize, 'left', true);
+  const flags = ['PRE-PAY', 'NOZZLE', 'FUEL'], pumpTxt = view.pump ? `PUMP ${String(view.pump).padStart(2, '0')}` : 'PUMP --';
+  ctx.font = '700 26px "Arial Narrow", Arial, sans-serif';
+  const fw = flags.map((f) => ctx.measureText(f).width), pw = ctx.measureText('PUMP 00').width;
+  let fx = Math.max(118, 30 + brandW + 39);
+  const gap = Math.max(10, Math.min(28, (W - 30 - pw - 24 - fx - fw.reduce((a, b) => a + b, 0)) / 2));   // flags fit before the pump
+  flags.forEach((f, i) => { label(ctx, f, fx, sy, !!L.flags[f], pal, 26); fx += fw[i] + gap; });
+  label(ctx, pumpTxt, W - 30, sy, view.pump != null, pal, 26, 'right');
+  ctx.fillStyle = pal.ghost; ctx.fillRect(28, 74, W - 56, 3);
+  // big lines: 8 cells each; one line alone sits in the middle
+  const slots = 8, cw = 54, ch = 118, x0 = (W - rowWidth(slots, cw)) / 2 - 6;
+  if (L.small) label(ctx, L.small, W / 2, 104, true, pal, 30, 'center');
+  if (L.bottom == null) {
+    const long = L.top.length > 8 || L.topDots != null;           // REFUELING + its dots: narrower cells
+    const n = long ? 9 : slots, w = long ? cw * 0.86 : cw;
+    const xs = long ? (W - rowWidth(n, w)) / 2 - 34 : x0;
+    const end = segRow(ctx, L.top, n, xs, 170, w, ch, pal);
+    if (L.topDots != null) {                                       // the animated "...": 0-3 dots
+      for (let i = 0; i < 3; i++) {
+        ctx.fillStyle = i < L.topDots ? pal.ink : pal.ghost;
+        ctx.beginPath(); ctx.arc(end + 2 + i * 22, 170 + ch - 8, 8, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    segRow(ctx, '', slots, x0, 330, cw * 0.5, ch * 0.42, pal);
+  } else {
+    segRow(ctx, L.top, slots, x0, L.small ? 130 : 110, cw, ch, pal);
+    segRow(ctx, L.bottom, slots, x0, L.small ? 290 : 270, cw, ch, pal);
+  }
+  // fuel bar: 20 blocks, lit with progress (fueling only)
+  const by = 455, bn = 20, bw = (W - 60 - (bn - 1) * 6) / bn;
+  const lit = view.state === 'fueling' && view.progress != null ? Math.round(Math.max(0, Math.min(1, view.progress)) * bn) : 0;
+  for (let i = 0; i < bn; i++) { ctx.fillStyle = i < lit ? pal.ink : pal.ghost; ctx.fillRect(30 + i * (bw + 6), by - 14, bw, 28); }
+  // pixel grid + a little vignette
+  ctx.fillStyle = 'rgba(0,0,0,0.035)';
+  for (let y = 0; y < H; y += 4) ctx.fillRect(0, y, W, 1);
+  for (let x = 0; x < W; x += 4) ctx.fillRect(x, 0, 1, H);
+  const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, W * 0.72);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.18)');
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+}
+
+// A message into its cell's view: the cell it changed, or -1.
+function apply(msg) {
+  let m = msg;
+  if (typeof m === 'string') { try { m = JSON.parse(m); } catch { return -1; } }
+  if (!m || typeof m !== 'object') return -1;
+  const i = m.cell == null ? 0 : Number(m.cell);
+  const view = views[i];
+  if (!view) return -1;
+  if (m.pump !== undefined) view.pump = m.pump;
+  if (m.brand) view.brand = String(m.brand).toUpperCase().slice(0, 9);   // the pump's brand: LTD, RON, GLOBE OIL, XERO
+  if (m.state) {
+    view.state = m.state;
+    view.price = Number(m.price) || 0;
+    view.progress = m.progress == null ? null : Number(m.progress);
+    view.line1 = m.line1 || ''; view.line2 = m.line2 || '';
+    view.seconds = m.seconds == null ? null : Number(m.seconds);
+  } else if (m.progress !== undefined) view.progress = Number(m.progress);
+  return i;
+}
+
+// A cell is drawn when a message changes it; the page ticks only while a cell is fuelling (the dots) or in error (the
+// flash), and then draws those cells alone: whip's DUI rule, a page that is not changing makes no frames, so it costs
+// nothing while it waits.
+const moving = (v) => v.state === 'fueling' || v.state === 'error';
+let tick = 0, timer = null;
+function paint(i) {
+  if (i >= 0) draw(i, tick);
+  const any = views.some(moving);
+  if (any && !timer) {
+    timer = setInterval(() => { tick++; views.forEach((v, j) => { if (moving(v)) draw(j, tick); }); }, 400);
+  } else if (!any && timer) { clearInterval(timer); timer = null; }
+}
+window.addEventListener('message', (e) => paint(apply(e.data)));
+if (q.get('state')) apply({ state: q.get('state'), price: q.get('price'), progress: q.get('progress'), pump: q.get('pump') ?? undefined,
+                           brand: q.get('brand'), line1: q.get('line1'), line2: q.get('line2') });
+else apply({ pump: q.get('pump') ?? undefined, brand: q.get('brand') });
+// Every cell once: an atlas starts with its cells off (black) till a side is put in one
+if (atlas) views.forEach((v) => { v.state = 'off'; });
+views.forEach((_, j) => draw(j, tick));
+paint(-1);
+</script>
+</body>
+</html>
