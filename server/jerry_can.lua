@@ -58,9 +58,10 @@ local function pourCan(src, _, netId)
         return nil, can
     end
     local why, held = refusal()
-    if why then return false, why end
+    if not held then return false, why end
 
     -- A street car whip has never seen is taken on: its tank needs somewhere to keep the fuel
+    ---@type number|false|nil
     local vehicleId = Fuel.vehicleIdOf(entity)   -- as whip_core's index confirms it (server/pumps.lua)
     if not vehicleId then
         local err
@@ -79,7 +80,7 @@ local function pourCan(src, _, netId)
 
     local can
     why, can = refusal()
-    if why then return false, why end
+    if not can then return false, why end
 
     local current = TankOf(vehicleId)
     if current >= 100.0 then return false, 'Vehicle is already full' end

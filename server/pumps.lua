@@ -143,10 +143,9 @@ local function resolveTarget(src, netId, lookOnly, pump)
     if vehicleId or lookOnly then return entity, vehicleId, nil end
 
     -- Taken on at the pump (its tank has somewhere to keep its fuel), counted against the player's street cars
-    local why
-    vehicleId, why = exports.whip_core:AdoptVehicle({ entity = entity, player = src })
-    if not vehicleId then return nil, nil, why or 'Cannot refuel that' end
-    return entity, vehicleId, nil
+    local adopted, why = exports.whip_core:AdoptVehicle({ entity = entity, player = src })
+    if not adopted then return nil, nil, why or 'Cannot refuel that' end
+    return entity, adopted, nil
 end
 
 -- What every game is told
@@ -622,7 +621,7 @@ end
 --- for good (`made`: the one the player's game made there for it, 0: none).
 local function removeNozzle(src, _, netId, made)
     local key, nozzle = nozzleInCar(netId)
-    if not key then
+    if not nozzle then
         deleteMadeBy(src, made)
         return false, 'There is no nozzle in that car'
     end
@@ -688,8 +687,8 @@ end
 --- Price the car a nozzle is in, for the pump's amounts ("Fill Up  $50"). False and why for anything the player
 --- could not fill.
 local function quote(src, _, netId)
-    local key, nozzle = nozzleInCar(netId)
-    if not key or nozzle.state ~= 'car' then return false, 'There is no nozzle in that car' end
+    local _, nozzle = nozzleInCar(netId)
+    if not nozzle or nozzle.state ~= 'car' then return false, 'There is no nozzle in that car' end
     if not atPump(src, nozzle) then
         local entity = NetworkGetEntityFromNetworkId(netId)
         local c = entity and entity ~= 0 and DoesEntityExist(entity) and GetEntityCoords(entity)
@@ -727,6 +726,7 @@ local function startFill(src, _, key, amount, payment)
 
     local entity, vehicleId, err = resolveTarget(src, netId, false, nozzle.pump)
     if not entity then return refuse(err or 'Cannot refuel that') end
+    ---@cast vehicleId -nil -- not a look: a car found is taken on
     if exports.whip_core:IsVehicleWrecked(vehicleId) then return refuse('That car is wrecked') end
 
     local need, _, each = quoteFor(TankOf(vehicleId))

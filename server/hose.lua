@@ -243,7 +243,7 @@ AddEventHandler('whip_fuel:nozzleTorn', function(e)
     local prefix = key and Pumps.prefixOf(key)
     local made = prefix and madeCopy[prefix]
     if prefix then madeCopy[prefix] = nil end
-    if not h or not made or torn[prefix] then return end
+    if not prefix or not h or not made or torn[prefix] then return end
     local o = h.origin
     local t = { key = key, pump = o, copyNetId = made.netId, maker = made.src, at = GetGameTimer() }
     torn[prefix] = t
@@ -366,6 +366,7 @@ local function tornCopy(src, _, key, netId, why)
     local ok = refusal == nil
     if mine then asked[prefix] = nil end
     if ok then
+        ---@cast copy -nil -- no refusal: it is there
         SetEntityOrphanMode(copy, 2)   -- KeepEntity: it stays when its maker leaves; repair() decides when it goes
         madeCopy[prefix] = { netId = netId, src = src }
         if Fuel.pumpTorn(key) then
@@ -378,6 +379,7 @@ local function tornCopy(src, _, key, netId, why)
     end
     tearSay(key, 'copy from %d refused: %s%s', src, refusal, (mine and not ok) and ', so the hose breaks off at the car' or '')
     if made then
+        ---@cast copy -nil -- made: it is there
         local m = unsigned(GetEntityModel(copy))
         for _, model in pairs(Config.Hose.TornModels or {}) do
             if hashOf(model) == m then DeleteEntity(copy) break end
