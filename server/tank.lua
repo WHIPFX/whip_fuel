@@ -71,7 +71,7 @@ end
 --- Every change from here on, and every car whip has now, as its tank reads: one with only the default too (a car
 --- that does not carry the stat is full).
 local function listen()
-    exports.whip_core:OnVehicleStatChange('fuel', function(vehicleId, value) follow(vehicleId, value) end, { now = 'all' })
+    exports.whip_core:OnVehicleStatChanged('fuel', function(vehicleId, value) follow(vehicleId, value) end, { now = 'all' })
 end
 
 Whip.register(function()
