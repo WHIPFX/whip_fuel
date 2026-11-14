@@ -84,5 +84,5 @@ System**.
 
 ## License
 
-whip_fuel is licensed under the GNU LGPL 3.0; see `LICENSE`. Third-party material is listed in `whip_core`'s
-`NOTICE.md`.
+whip_fuel is licensed under the GNU LGPL 3.0; see `COPYING.LESSER`, and `COPYING` for the GPL 3.0 it builds on.
+`NOTICE.md` says what the licence doesn't cover; `whip_core`'s `NOTICE.md` is the full list.
