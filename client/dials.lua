@@ -184,6 +184,7 @@ local function wanted(me)
         if d > range then return end
         local pump, m = classicAt(at)
         if not pump or HasObjectBeenBroken(pump) then return end
+        ---@cast m -nil -- it comes with the pump
         local list = out[m.kind] or {}
         out[m.kind] = list
         list[#list + 1] = { prefix = prefix, pump = pump, m = m, d = d }
@@ -282,7 +283,7 @@ end
 RegisterNetEvent('whip_fuel:sale', function(prefix, sale)
     if type(prefix) ~= 'string' or type(sale) ~= 'table' then return end
     sales[prefix] = { p = tonumber(sale.p) or 0, u = tonumber(sale.u) or 0 }
-    for name, k in pairs(state) do
+    for _, k in pairs(state) do
         for i = 1, 4 do
             local s = k.slots[i]
             if s and s.prefix == prefix then

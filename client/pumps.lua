@@ -416,6 +416,7 @@ local function screenTick()
 
     if #want == 0 then
         if screenUp then
+            ---@cast screenDui -nil -- up, so made (screenRelease clears both)
             for _, s in pairs(shown) do SendDuiMessage(screenDui, json.encode({ cell = s.cell - 1, state = 'off' })) end
         end
         if next(shown) then shown = {} end
@@ -424,6 +425,7 @@ local function screenTick()
     end
     screenWantedAt = now
     if not screenEnsure() then return end
+    ---@cast screenDui -nil -- screenEnsure made it
     table.sort(want, function(a, b) return a.d < b.d end)
 
     -- Cells: the nearest the full-size one; the rest keep a half-size one they had, else take the first free.
@@ -448,6 +450,7 @@ local function screenTick()
         local w = want[i]
         local old = was[w.key]
         local same = old and old.pump == w.pump
+        ---@cast held -nil -- read only for the 'torn' want, which is made only while held
         local s = {
             cell = cellOf[i], pump = w.pump, side = w.side, brand = w.brand, moves = w.moves, thanksAt = w.thanksAt,
             number = same and old.number or pumpNumber(w.pump, w.side),
@@ -703,7 +706,10 @@ local function dropNozzle()
         local rot = held and GetEntityRotation(held, 2) or nil
         Nozzle.detach()
         local netId, obj = Nozzle.makeLoose(at, rot)
-        if obj then SetEntityVelocity(obj, GetEntityVelocity(ped)) end   -- it carries on a little with you
+        if obj then   -- it carries on a little with you
+            local v = GetEntityVelocity(ped)
+            SetEntityVelocity(obj, v.x, v.y, v.z)
+        end
         TriggerServerEvent('whip_fuel:drop', netId)
     end)
 end
@@ -834,7 +840,7 @@ local function takeNozzle(ctx)
     if Nozzle.myKey or Nozzle.busy then return end
     local e = ctx.entity
     if not e or not DoesEntityExist(e) then return end
-    local key = keyOfCtx(ctx)
+    local key = keyOfCtx(ctx) --[[@as string]]   -- nil only when the entity is not there (above)
     local at, model, heading = GetEntityCoords(e), GetEntityModel(e), GetEntityHeading(e)
     local epoch = charEpoch
     Nozzle.busy = true
@@ -957,6 +963,7 @@ local function amountOption(amount)
         label = function(ctx)
             local n, q = unitsNow(keyOfCtx(ctx))
             if amount == 'full' then
+                ---@cast q table -- read only with a number n, which comes with its quote
                 return n and ('Fill Up  $%d'):format(n * (q.perUnit or 0)) or 'Fill Up'
             end
             return ('Add %s%%  $%d'):format(amount, (n or 0) * ((q and q.perUnit) or 0))
@@ -967,6 +974,7 @@ local function amountOption(amount)
             if not i or i.n ~= 'car' or i.p or i.err or not free() then return false end
             local n, q = unitsNow(key)
             if amount == 'full' then return n ~= 0 end
+            ---@cast q table -- read only with a number n, which comes with its quote
             return n ~= nil and n > 0 and n < q.units
         end,
         options = PAY,
@@ -1322,9 +1330,9 @@ CreateThread(function()
             end
             holstersCheck()
             refreshCircles()   -- walked near a busy side, or away from one
-            for _, info in pairs(faces) do
-                if info.n == 'car' and info.car then
-                    local veh = entityOf(info.car)
+            for _, face in pairs(faces) do
+                if face.n == 'car' and face.car then
+                    local veh = entityOf(face.car)
                     if veh and #(GetEntityCoords(veh) - me) < QUOTE_RANGE then wanted[veh] = now end
                 end
             end
@@ -1353,9 +1361,9 @@ AddEventHandler('whip_core:player:logout', function()
 end)
 
 -- A new character learns what every pump is doing.
-AddEventHandler('whip_core:player:loaded', function(...)
+AddEventHandler('whip_core:player:loaded', function()
     charLoaded = true
-    facesFetch(...)
+    facesFetch()
 end)
 
 -- whip_fuel started under a loaded character: what every pump is doing
