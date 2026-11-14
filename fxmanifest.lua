@@ -63,3 +63,4 @@ data_file 'DLC_ITYP_REQUEST' 'stream/classic_pump/whip_oldpump_dial.ytyp'
 data_file 'DLC_ITYP_REQUEST' 'stream/classic_pump/whip_vintage_dial.ytyp'
 
 dependencies { 'whip_core' }
+whip_requires '1.0'   -- the whip_core it is built for: the setup report flags an older one
