@@ -110,10 +110,10 @@ end
 
 -- The car
 
---- whip's id for this car as whip_core's index confirms it (GetVehicleBy 'entity'), or nil for a street car whip has
+--- whip's id for this car as whip_core's index confirms it (GetVehicle { entity = }), or nil for a street car whip has
 --- never taken on. Never the raw whipVehicleId stamp, which could charge another car's record.
 local function vehicleIdOf(entity)
-    local ok, v = pcall(function() return exports.whip_core:GetVehicleBy('entity', entity) end)
+    local ok, v = pcall(function() return exports.whip_core:GetVehicle({ entity = entity }) end)
     return ok and type(v) == 'table' and tonumber(v.vehicleId) or nil
 end
 Fuel.vehicleIdOf = vehicleIdOf
