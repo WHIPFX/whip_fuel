@@ -4,6 +4,6 @@ Fuel for whip: a tank on every car that driving burns, petrol pumps (a nozzle on
 cans, and the pump's hose. Without this resource whip has no fuel at all, and cars just drive.
 
 - **Needs:** whip_core. The hose needs whip_rope as well; without it, the pumps still fill a car.
-- **Install:** it comes in the `[whip]` folder, and `ensure [whip]` starts it. Nothing to add to server.cfg, no SQL.
+- **Install:** WHIP's txAdmin recipe installs it and adds `ensure whip_fuel` to server.cfg. Nothing else to add, no SQL.
 - **Settings:** `/whip` → Settings → Fuel (prices, how fast cars burn it, the stations and their map icons). Or
   `config.lua`.
