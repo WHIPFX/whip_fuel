@@ -6,6 +6,7 @@ name 'whip_fuel'
 description 'Fuel for whip: a tank on every car that driving burns, petrol pumps (a nozzle on each side, paid at the pump), jerry cans, and the hose (with whip_rope).'
 author 'Whippy'
 version '1.0.0'
+whip_updates 'WHIPFX/whip_fuel'   -- whip_core checks this repository's releases for a newer version
 
 -- Without this resource whip has no fuel at all: cars just drive. Everything here goes through whip_core's exports.
 -- Whip.register re-runs our registrations whenever whip_core starts; Whip.configPage puts config.lua in /whip.
