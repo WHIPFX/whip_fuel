@@ -70,8 +70,8 @@ local function pourCan(src, _, netId)
     end
     if TankOf(vehicleId) >= 100.0 then return false, 'Vehicle is already full' end
 
-    -- Through Whip.call: a bar whip_core stops in the middle of is answered (false), not waited on for ever
-    local done = Whip.call('Progress', src, {
+    -- Through Whip.core: a bar whip_core stops in the middle of is answered (false), not waited on for ever
+    local done = Whip.core:Progress(src, {
         label = 'Refueling...', duration = pourMs(), canCancel = true,
         near = { vehicle = vehicleId, range = reach },
         item = { item = held.item, metadata = held.metadata },   -- the can's picture in the bar's disc
@@ -152,7 +152,7 @@ local function fillCan(src, _, payment, x, y, z)
     local reach = (Config.Pump.Reach or 3.0) + 2.0
     filling[src] = true
     local speed = 100 / math.max(1, tonumber(Config.Pump.FullSeconds) or 120)   -- the pump's flow, percent a second
-    local done = Whip.call('Progress', src, {   -- answered false if whip_core stops mid-bar (filling[src] let go)
+    local done = Whip.core:Progress(src, {   -- answered false if whip_core stops mid-bar (filling[src] let go)
         label = ('Filling the jerry can — $%d'):format(price),
         duration = math.max(1000, math.ceil(units / speed * 1000)),
         canCancel = true,

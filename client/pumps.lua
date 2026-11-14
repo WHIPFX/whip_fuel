@@ -687,7 +687,7 @@ local blockedAs = nil
 local function blockFor(list)
     if list == blockedAs then return end
     local ok
-    if list then ok = Whip.call('BlockControls', 'nozzle', { controls = list }) else ok = Whip.call('UnblockControls', 'nozzle') end
+    if list then ok = Whip.core:BlockControls('nozzle', { controls = list }) else ok = Whip.core:UnblockControls('nozzle') end
     if ok == true or not list then blockedAs = list end
 end
 
@@ -1159,7 +1159,7 @@ local function addPumpCircle(busy)
     for model, p in pairs(c.PlacingByModel or {}) do
         perModel[model] = { offset = p.offset, heading = p.heading }
     end
-    local ok, why = Whip.call('AddAction', {
+    local ok, why = Whip.core:AddAction({
         id = 'pump',
         at = {
             model = Config.PumpModels,
@@ -1195,8 +1195,8 @@ local function addNozzleCircles(hand)
         nPerModel[model] = { offset = p.offset, heading = p.heading }
     end
     local function nozzleAction(id, models, faceCount)
-        if #models == 0 then Whip.call('RemoveAction', id) return end
-        local okN, whyN = Whip.call('AddAction', {
+        if #models == 0 then Whip.core:RemoveAction(id) return end
+        local okN, whyN = Whip.core:AddAction({
             id = id,
             at = {
                 model = models,

@@ -206,7 +206,7 @@ local OFFERS = {
 local up = {}   -- [offer] = true while its actions are added
 
 --- Puts each offer up or takes it down to match what is wanted now. Cheap when nothing changed: natives and a look at
---- the sides. Our own code (events, the pump's word), so whip_core goes through Whip.call.
+--- the sides. Our own code (events, the pump's word), so whip_core goes through Whip.core.
 local function refreshOffers()
     if not Whip.isReady() then return end
     for name, offer in pairs(OFFERS) do
@@ -216,10 +216,10 @@ local function refreshOffers()
             for _, part in ipairs(offer.parts) do
                 local def = offer.action(part)
                 if want then
-                    local ok, why = Whip.call('AddAction', def)
+                    local ok, why = Whip.core:AddAction(def)
                     if not ok then print(('[whip_fuel] no %s at %s: %s'):format(name, part, tostring(why))) end
                 else
-                    Whip.call('RemoveAction', def.id)
+                    Whip.core:RemoveAction(def.id)
                 end
             end
         end
