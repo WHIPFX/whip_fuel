@@ -307,7 +307,9 @@ end
 --- Where side `side`'s LCD is on `pump` now: { centre, right, up } in the world, for WorldQuad.draw.
 local function lcdQuad(pump, side)
     local at = SCREEN_AT[side]
-    local r, f, u, p = GetEntityMatrix(pump)
+    -- Forward first, then right (as whip_core's doors.lua and vehicle_points.lua read it). Read right-first, every
+    -- screen stood edge-on out of the pump's face.
+    local f, r, u, p = GetEntityMatrix(pump)
     return {
         p.x + r.x * at.x + f.x * at.y + u.x * at.z, p.y + r.y * at.x + f.y * at.y + u.y * at.z,
         p.z + r.z * at.x + f.z * at.y + u.z * at.z,
