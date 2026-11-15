@@ -533,9 +533,8 @@ local function sprayNozzle(key, info)
     if info.h == myServerId then
         ped = PlayerPedId()
     else
-        -- Whip.playerIndex, not GetPlayerFromServerId alone: on Enhanced an unknown player answers 0, often the local player.
-        local p = Whip.playerIndex(info.h)
-        ped = p and NetworkIsPlayerActive(p) and GetPlayerPed(p) or nil
+        local p = GetPlayerFromServerId(info.h)
+        ped = p ~= -1 and NetworkIsPlayerActive(p) and GetPlayerPed(p) or nil
     end
     if not ped or ped == 0 then return nil end
     local s = sprays[key]
