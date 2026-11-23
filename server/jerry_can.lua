@@ -117,12 +117,20 @@ local function canQuote(can)
     return units, units * each
 end
 
+--- The cash a payment can take: loose notes and what their wallets hold (whip_core's GetSpendableCash, as the charge
+--- counts it), or the loose notes alone on a whip_core without it.
+local function spendableCash(src)
+    local ok, n = pcall(function() return exports.whip_core:GetSpendableCash(src) end)
+    if ok and tonumber(n) then return tonumber(n) end
+    return tonumber(exports.whip_core:GetPlayerCash(src)) or 0
+end
+
 --- Why the player could not pay `price` by `payment` now, or nil when they look able to: said before the bar rather
 --- than after it. The charge decides.
 local function cannotPay(src, price, payment)
     if price <= 0 then return nil end
     if payment == 'cash' then
-        local cash = tonumber(exports.whip_core:GetPlayerCash(src)) or 0
+        local cash = spendableCash(src)
         return cash < price and ('Not enough cash: it is $%d'):format(price) or nil
     end
     local acct = exports.whip_core:GetDefaultBankAccount(src)
